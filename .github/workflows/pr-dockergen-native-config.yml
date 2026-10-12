@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   proxy-config-validation:
-    name: Validate proxy config with local docker-gen
+    name: Validate project config with local docker-gen
     runs-on: [self-hosted, docker-lab]
     timeout-minutes: 5
 
@@ -17,7 +17,7 @@ jobs:
       - name: Checkout pull request code
         uses: actions/checkout@v4
 
-      - name: Run docker-gen with repository native config
+      - name: Validate repository configuration files
         shell: bash
         run: |
           set -euo pipefail
@@ -47,7 +47,8 @@ jobs:
 
           echo "Using nginx-proxy container: $PROXY"
 
-          test -f ci/docker-gen.cfg
+          test -f config/pyproject.toml
+          test -f config/docker-gen.cfg
 
           docker exec "$PROXY" sh -lc '
             set -eu
@@ -85,11 +86,11 @@ jobs:
             ls -l /tmp/pr-nginx.tmpl
           '
 
-          docker cp ci/docker-gen.cfg "$PROXY":/tmp/pr-docker-gen.cfg
+          docker cp config/docker-gen.cfg "$PROXY":/tmp/pr-docker-gen.cfg
 
           docker exec "$PROXY" sh -lc '
             set -eu
-            echo "--- docker-gen native config from pull request ---"
+            echo "--- docker-gen native config from repository config folder ---"
             sed -n "1,220p" /tmp/pr-docker-gen.cfg
           '
 
