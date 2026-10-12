@@ -44,6 +44,14 @@ jobs:
       - run: pip install -r tests/requirements.txt
       - run: pytest -q tests
       - run: docker compose config --quiet
+      - name: Validate Nginx configuration with local TLS certificates
+        run: |
+          python - <<'PY'
+          import subprocess
+          import create_project2
+          subprocess.run(["/bin/sh", "-ec", create_project2.TLS_COMMANDS], check=True)
+          PY
+          docker compose run --rm --no-deps nginx-proxy nginx -t
 
   frontend:
     runs-on: ubuntu-latest

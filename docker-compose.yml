@@ -5,9 +5,12 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/tmp/docker.sock:ro
       - ./certs:/etc/nginx/certs:ro
+      - ./nginx-proxy/conf.d/ckpit.apex.tld.conf:/etc/nginx/conf.d/ckpit.apex.tld.conf:ro
     networks:
       - app_net
 
@@ -169,18 +172,6 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-    networks:
-      - app_net
-
-  ckpit:
-    build: ./ckpit
-    restart: unless-stopped
-    environment:
-      VIRTUAL_HOST: ckpit.apex.tld
-      VIRTUAL_PORT: "8000"
-      VIRTUAL_PROTO: http
-    expose:
-      - "8000"
     networks:
       - app_net
 

@@ -6,27 +6,31 @@ FastAPI expose l'API, PostgreSQL conserve les items et Redis accélère leur lec
 Un worker écrit un message en base toutes les 30 secondes.
 
 n8n et Grafana sont des instances locales. n8n utilise sa propre base PostgreSQL.
-Grafana dispose automatiquement d'une datasource Prometheus locale. `ckpit` est
-un dashboard applicatif FastAPI/Jinja2 qui vérifie les composants sur le réseau
-Docker et affiche les résultats avec l'horodatage du rendu.
+Grafana dispose automatiquement d'une datasource Prometheus locale.
+`ckpit.apex.tld` expose Cockpit système installé directement sur l'hôte Linux
+avec `apt`.
 
 ## Services et réseau
 
 Tous les conteneurs appartiennent au réseau bridge `app_net`. Seul nginx-proxy
-publie les ports de la VM : **80 et 443**. Les autres services utilisent `expose`
+publie des ports Docker sur la VM : **80 et 443**. Les autres services utilisent `expose`
 pour leurs ports internes ; le worker n'écoute sur aucun port.
 
-| Service public | URL | Port HTTP interne |
+| Service Docker public | URL | Port HTTP interne |
 | --- | --- | --- |
 | frontend | https://frontend.apex.tld | 80 |
 | backend | https://backend.apex.tld | 8000 |
 | grafana | https://grafana.apex.tld | 3000 |
 | n8n | https://n8n.apex.tld | 5678 |
-| ckpit | https://ckpit.apex.tld | 8000 |
 
 Ces services déclarent leur `VIRTUAL_HOST`, `VIRTUAL_PORT` et `VIRTUAL_PROTO=http`.
 nginx-proxy utilise le socket Docker monté en lecture seule pour détecter leurs
 conteneurs et construire sa configuration automatiquement. TLS se termine au proxy.
+
+Cockpit est un service système de la VM, accessible en HTTPS sur le port hôte
+`9090`. Le fichier `nginx-proxy/conf.d/ckpit.apex.tld.conf` publie sa route
+`https://ckpit.apex.tld` dans le même nginx-proxy. Son accès à l'hôte utilise
+`host.docker.internal:host-gateway` déclaré dans `extra_hosts`.
 
 | Service interne, sans VIRTUAL_HOST | Rôle et adresse Docker |
 | --- | --- |
@@ -47,8 +51,10 @@ IP publique**. Le DNS sélectionne la machine ; il ne sélectionne pas le conten
 1. Le DNS ou `/etc/hosts` amène le client jusqu'à la VM.
 2. nginx-proxy reçoit la requête sur 80/443.
 3. Sur 443, il présente le certificat TLS correspondant au sous-domaine.
-4. Il lit le header HTTP `Host` et route vers le conteneur qui déclare le
-   `VIRTUAL_HOST` correspondant, sur son `VIRTUAL_PORT` interne.
+4. Il lit le header HTTP `Host`. Pour frontend, backend, Grafana et n8n, il route
+   vers le conteneur qui déclare le `VIRTUAL_HOST` correspondant, sur son
+   `VIRTUAL_PORT` interne. Pour `ckpit.apex.tld`, le serveur Nginx statique route
+   vers `https://host.docker.internal:9090` sur la même VM.
 
 En local, ajouter ces lignes à `/etc/hosts` sur la machine qui utilise le
 navigateur et curl, lorsque Docker tourne sur cette même machine :
@@ -66,8 +72,9 @@ internes entre conteneurs reste gérée par Docker.
 
 ## Certificats locaux
 
-Prérequis : Docker Engine, Docker Compose v2 et OpenSSL. Le dossier `certs/`
-contient initialement `.gitkeep`. Créer les certificats **avant** le démarrage
+Prérequis : un hôte Linux avec `apt` et systemd, Docker Engine prenant en charge
+`host-gateway`, Docker Compose v2 et OpenSSL. Le dossier `certs/` contient
+initialement `.gitkeep`. Créer les certificats **avant** le démarrage
 pour activer les URLs HTTPS :
 
 ```sh
@@ -81,6 +88,7 @@ for service in frontend backend grafana n8n ckpit; do
   cp certs/apex.tld.crt "certs/${service}.apex.tld.crt"
   cp certs/apex.tld.key "certs/${service}.apex.tld.key"
 done
+
 chmod 600 certs/*.key
 ```
 
@@ -99,6 +107,10 @@ ckpit.apex.tld.crt
 ckpit.apex.tld.key
 ```
 
+Le serveur TLS statique exige `ckpit.apex.tld.crt` et `ckpit.apex.tld.key` dès
+le démarrage de nginx-proxy. Ces deux fichiers doivent exister avant
+`docker compose up -d --build`.
+
 `curl -k` accepte ce certificat auto-signé pour les tests locaux. Pour le
 navigateur, établir la confiance dans le certificat pour **frontend et backend** :
 le JavaScript appelle directement `https://backend.apex.tld/health` et `/items`.
@@ -111,6 +123,64 @@ Après remplacement de certificats sur une stack démarrée :
 docker compose restart nginx-proxy
 ```
 
+## Cockpit système hôte
+
+`ckpit.apex.tld` expose le vrai Cockpit système de la VM.
+
+Cockpit est installé directement sur l'hôte Linux :
+
+```sh
+sudo apt update
+sudo apt install -y cockpit
+sudo systemctl enable --now cockpit.socket
+```
+
+Cockpit écoute sur le port hôte `9090`.
+
+Le conteneur `nginx-proxy` route `https://ckpit.apex.tld` vers le service hôte :
+`https://ckpit.apex.tld` → `nginx-proxy` →
+`https://host.docker.internal:9090` → `cockpit.socket` sur la VM.
+
+Configurer Cockpit pour accepter l'origine reverse-proxy :
+
+```sh
+sudo mkdir -p /etc/cockpit
+
+sudo tee /etc/cockpit/cockpit.conf >/dev/null <<'EOF'
+[WebService]
+Origins = https://ckpit.apex.tld wss://ckpit.apex.tld
+ProtocolHeader = X-Forwarded-Proto
+EOF
+
+sudo systemctl restart cockpit.socket
+sudo systemctl try-restart cockpit.service
+```
+
+La dernière commande recharge aussi le service Cockpit lorsqu'il est déjà actif.
+
+Vérifier Cockpit localement sur la VM :
+
+```sh
+sudo systemctl status cockpit.socket
+curl -k https://127.0.0.1:9090
+```
+
+Le port hôte `9090` doit être joignable depuis le réseau Docker `app_net` à
+l'adresse exposée par `host-gateway`. Configurer le pare-feu hôte pour autoriser
+cet accès Docker et bloquer les accès publics directs à `9090`. Les accès web
+publics passent par nginx-proxy sur `80` et `443`.
+
+La configuration Nginx conserve HTTPS vers Cockpit, accepte son certificat
+local via `proxy_ssl_verify off` et transmet les headers d'origine et de mise
+à niveau WebSocket. Se connecter avec un compte Linux de la VM.
+
+Après le lancement Docker, vérifier la configuration et la route publique :
+
+```sh
+docker compose exec nginx-proxy nginx -t
+curl -k https://ckpit.apex.tld
+```
+
 ## Lancement et tests HTTP
 
 Depuis la racine du projet :
@@ -120,6 +190,15 @@ docker compose config --quiet
 docker compose up -d --build
 docker compose ps
 ```
+
+Pour mettre à jour une stack déjà démarrée, conserver le même nom de projet
+Compose et retirer les anciens conteneurs dont le service a été supprimé :
+
+```sh
+docker compose up -d --build --remove-orphans
+```
+
+Les volumes de données sont conservés lors de cette mise à jour.
 
 Le backend attend les healthchecks PostgreSQL et Redis. n8n attend sa base dédiée.
 Le backend et le worker créent automatiquement la même table `items`, avec un
@@ -166,7 +245,7 @@ Le frontend affiche l'état du backend, les derniers items, un formulaire de
 création et les liens vers les autres interfaces. Il actualise les données toutes
 les 15 secondes et affiche les erreurs de requête.
 
-## Grafana, Prometheus et ckpit
+## Grafana, Prometheus et n8n
 
 Grafana est accessible avec les identifiants initiaux `admin` / `admin`.
 La datasource **Prometheus** est provisionnée depuis
@@ -186,20 +265,6 @@ backend_cache_hits_total
 Prometheus est local, avec la configuration `prometheus/prometheus.yml`. Ses
 données ne disposent pas d'un volume persistant dans cette stack ; elles sont
 perdues lorsque son conteneur est recréé.
-
-`https://ckpit.apex.tld` affiche les cinq URLs publiques et interroge en parallèle :
-
-- `http://frontend:80`
-- `http://backend:8000/health`, dont les résultats PostgreSQL et Redis
-- `http://n8n:5678`
-- `http://grafana:3000/api/health`
-- `http://prometheus:9090/-/healthy`
-- `http://prometheus:9090/api/v1/targets?state=active`, pour vérifier que la target
-  `http://backend:8000/metrics` est réellement UP
-
-Le dashboard affiche l'horodatage UTC et se recharge toutes les 15 secondes.
-Si le backend ne répond pas, ses dépendances sont affichées comme **non mesurées**.
-La page reste accessible pour afficher les composants en échec.
 
 n8n utilise `n8n-postgres` avec la base et les identifiants `n8n` / `n8n`.
 Son URL publique et son URL de webhook sont configurées en HTTPS, avec un seul
@@ -221,6 +286,8 @@ Arrêter en conservant les données :
 ```sh
 docker compose down
 ```
+
+Cockpit reste géré par systemd sur l'hôte lorsque la stack Docker est arrêtée.
 
 Supprimer aussi les cinq volumes et leurs données :
 
@@ -259,11 +326,11 @@ utiliser directement les commandes de lancement habituelles.
 
 ## Générateur autonome
 
-`create_project.py` utilise uniquement la bibliothèque standard Python et
+`create_project2.py` utilise uniquement la bibliothèque standard Python et
 `pathlib`. Depuis un dossier cible vide :
 
 ```sh
-python /chemin/vers/create_project.py
+python /chemin/vers/create_project2.py
 ```
 
 Il écrit tous les fichiers en UTF-8, crée les dossiers parents, affiche chaque
@@ -271,26 +338,30 @@ fichier et les prochaines commandes utiles. Il vérifie toutes les destinations
 avant d'écrire et refuse les fichiers existants sans `--force` :
 
 ```sh
-python /chemin/vers/create_project.py --force
+python /chemin/vers/create_project2.py --force
 ```
 
-`--force` met à jour les fichiers générés et retire l'ancien `backend/app.py`
-Flask. Il conserve les autres fichiers, notamment les certificats. Les liens
-symboliques ne sont pas suivis lors de la génération.
+`--force` met à jour les fichiers générés et retire le dossier `ckpit/` ainsi
+que les anciens fichiers remplacés. Il conserve les autres fichiers, notamment
+les certificats. Les liens symboliques ne sont pas suivis lors de la génération.
+Le générateur affiche les commandes d'installation et de configuration Cockpit
+à exécuter sur l'hôte ; il crée les fichiers du projet dans le dossier courant.
 
 ## Vérification du code
 
 Le workflow `.github/workflows/ci.yml` lance aussi les tests d'intégration avec
 PostgreSQL 16 et Redis 7, valide le Compose et construit le frontend à chaque
 push ou pull request.
+Il génère les certificats locaux et vérifie aussi la configuration Nginx avec
+l'image `nginxproxy/nginx-proxy:latest` et la commande `nginx -t`.
 
-Les tests de génération et de dashboard se lancent avec :
+Les tests de génération et de configuration de la stack se lancent avec :
 
 ```sh
 python -m venv .venv
 . .venv/bin/activate
 pip install -r tests/requirements.txt
-pytest -q tests/test_generator.py tests/test_dashboard.py
+pytest -q tests/test_generator.py tests/test_stack.py
 cd frontend
 npm ci
 npm run build
