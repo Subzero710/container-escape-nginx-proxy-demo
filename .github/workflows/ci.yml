@@ -46,11 +46,19 @@ jobs:
       - run: docker compose config --quiet
       - name: Validate Nginx configuration with local TLS certificates
         run: |
-          python - <<'PY'
-          import subprocess
-          import create_project2
-          subprocess.run(["/bin/sh", "-ec", create_project2.TLS_COMMANDS], check=True)
-          PY
+          mkdir -p certs
+          openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
+            -keyout certs/apex.tld.key \
+            -out certs/apex.tld.crt \
+            -subj "/CN=*.apex.tld" \
+            -addext "subjectAltName=DNS:*.apex.tld,DNS:apex.tld"
+
+          for service in frontend backend grafana n8n ckpit; do
+            cp certs/apex.tld.crt "certs/${service}.apex.tld.crt"
+            cp certs/apex.tld.key "certs/${service}.apex.tld.key"
+          done
+
+          chmod 600 certs/*.key
           docker compose run --rm --no-deps nginx-proxy nginx -t
 
   frontend:
