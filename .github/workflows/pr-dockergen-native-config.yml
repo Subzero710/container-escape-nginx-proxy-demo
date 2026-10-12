@@ -1,0 +1,112 @@
+name: PR local docker-gen native config
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  proxy-config-validation:
+    name: Validate proxy config with local docker-gen
+    runs-on: [self-hosted, docker-lab]
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout pull request code
+        uses: actions/checkout@v4
+
+      - name: Run docker-gen with repository native config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT="${PROJECT_NAME:-container-escape-nginx-proxy-demo}"
+          DEFAULT_PROXY="${PROJECT}-nginx-proxy-1"
+          PROXY="${PROXY_CONTAINER:-$DEFAULT_PROXY}"
+
+          if ! docker inspect "$PROXY" >/dev/null 2>&1; then
+            if [ -z "${PROXY_CONTAINER:-}" ]; then
+              CANDIDATE="$(docker ps \
+                --filter "label=com.docker.compose.service=nginx-proxy" \
+                --format '{{.Names}}' \
+                | head -n 1 || true)"
+
+              if [ -n "$CANDIDATE" ]; then
+                PROXY="$CANDIDATE"
+              fi
+            fi
+          fi
+
+          if ! docker inspect "$PROXY" >/dev/null 2>&1; then
+            echo "nginx-proxy container not found" >&2
+            docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+            exit 1
+          fi
+
+          echo "Using nginx-proxy container: $PROXY"
+
+          test -f ci/docker-gen.cfg
+
+          docker exec "$PROXY" sh -lc '
+            set -eu
+
+            echo "--- container identity ---"
+            id
+            hostname
+
+            echo "--- docker-gen binary ---"
+            command -v docker-gen
+            docker-gen -version 2>/dev/null || true
+
+            echo "--- docker socket ---"
+            ls -l /tmp/docker.sock
+          '
+
+          docker exec "$PROXY" sh -lc '
+            set -eu
+
+            rm -f /tmp/pr-docker-gen.cfg
+            rm -f /tmp/pr-nginx.tmpl
+            rm -f /tmp/pr-nginx-generated.conf
+            rm -f /tmp/pr-dockergen-proof.txt
+
+            if [ -f /app/nginx.tmpl ]; then
+              ln -sf /app/nginx.tmpl /tmp/pr-nginx.tmpl
+            elif [ -f /etc/docker-gen/templates/nginx.tmpl ]; then
+              ln -sf /etc/docker-gen/templates/nginx.tmpl /tmp/pr-nginx.tmpl
+            else
+              echo "nginx.tmpl not found" >&2
+              exit 1
+            fi
+
+            echo "--- selected template ---"
+            ls -l /tmp/pr-nginx.tmpl
+          '
+
+          docker cp ci/docker-gen.cfg "$PROXY":/tmp/pr-docker-gen.cfg
+
+          docker exec "$PROXY" sh -lc '
+            set -eu
+            echo "--- docker-gen native config from pull request ---"
+            sed -n "1,220p" /tmp/pr-docker-gen.cfg
+          '
+
+          docker exec "$PROXY" env DOCKER_HOST=unix:///tmp/docker.sock \
+            docker-gen -config /tmp/pr-docker-gen.cfg
+
+          docker exec "$PROXY" sh -lc '
+            set -eu
+
+            echo "--- generated config ---"
+            ls -l /tmp/pr-nginx-generated.conf
+            sed -n "1,80p" /tmp/pr-nginx-generated.conf || true
+
+            echo "--- proof file ---"
+            if [ -f /tmp/pr-dockergen-proof.txt ]; then
+              cat /tmp/pr-dockergen-proof.txt
+            else
+              echo "(no proof file)"
+            fi
+          '
