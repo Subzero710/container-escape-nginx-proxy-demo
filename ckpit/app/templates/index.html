@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="15">
+  <title>Apex Stack Cockpit</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">APEX · STACK SELF-HOSTED</p>
+      <h1>Apex Stack Cockpit</h1>
+      <p>Une machine, plusieurs services. État relevé depuis le réseau interne.</p>
+      <a class="refresh" href="/">Actualiser maintenant</a>
+    </header>
+    <section aria-labelledby="urls-title">
+      <h2 id="urls-title">URLs publiques</h2>
+      <div class="urls">
+        {% for service in public_urls %}
+        <a href="{{ service.url }}"><strong>{{ service.name }}</strong><span>{{ service.url }}</span></a>
+        {% endfor %}
+      </div>
+    </section>
+    <section aria-labelledby="checks-title">
+      <h2 id="checks-title">État des composants</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Composant</th><th>État</th><th>Résultat</th></tr></thead>
+          <tbody>
+            {% for check in checks %}
+            <tr>
+              <th scope="row">{{ check.label }}</th>
+              <td><span class="badge {{ check.state }}">{% if check.state == 'healthy' %}OK{% elif check.state == 'unavailable' %}Non mesuré{% else %}Échec{% endif %}</span></td>
+              <td>{{ check.detail }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <footer>Rendu : <time>{{ rendered_at }}</time> · Actualisation automatique toutes les 15 secondes.</footer>
+  </main>
+</body>
+</html>

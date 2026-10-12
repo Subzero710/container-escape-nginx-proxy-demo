@@ -1,17 +1,49 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Frontend</title>
-  <style>
-    body { font-family: sans-serif; max-width: 42rem; margin: 5rem auto; padding: 1rem; }
-    h1 { margin-bottom: 1rem; }
-  </style>
+  <meta name="description" content="Application Apex hébergée sur une seule VM.">
+  <title>Apex Fullstack</title>
 </head>
 <body>
-  <h1>Frontend</h1>
-  <p>frontend.apex.tld</p>
-  <p>Routed by nginx-proxy</p>
+  <main>
+    <header>
+      <p class="eyebrow">SELF-HOSTED · UNE SEULE MACHINE</p>
+      <h1>Apex Fullstack</h1>
+      <p class="domain">frontend.apex.tld</p>
+      <nav aria-label="Services de la stack">
+        <a href="https://backend.apex.tld/docs">Backend</a>
+        <a href="https://grafana.apex.tld">Grafana</a>
+        <a href="https://n8n.apex.tld">n8n</a>
+        <a href="https://ckpit.apex.tld">ckpit</a>
+      </nav>
+    </header>
+    <section aria-labelledby="health-title">
+      <div class="section-heading">
+        <h2 id="health-title">État du backend</h2>
+        <button id="refresh-health" type="button">Vérifier</button>
+      </div>
+      <p><a href="https://backend.apex.tld/health">https://backend.apex.tld/health</a></p>
+      <pre id="health-result" aria-live="polite">Vérification en cours…</pre>
+    </section>
+    <section aria-labelledby="items-title">
+      <div class="section-heading">
+        <h2 id="items-title">Messages de la stack</h2>
+        <button id="refresh-items" type="button">Actualiser</button>
+      </div>
+      <p>Messages enregistrés dans PostgreSQL. Le worker ajoute un message toutes les 30 secondes.</p>
+      <form id="item-form">
+        <label for="message">Nouveau message</label>
+        <textarea id="message" name="message" maxlength="500" rows="3" required></textarea>
+        <button id="submit-item" type="submit">Créer un item</button>
+      </form>
+      <p id="item-feedback" role="status" aria-live="polite"></p>
+      <p id="items-status" aria-live="polite"></p>
+      <ul id="items" class="items"></ul>
+    </section>
+    <footer>Les données et les interfaces sont hébergées dans cette stack Docker.</footer>
+  </main>
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>

@@ -16,6 +16,7 @@ services:
     restart: unless-stopped
     environment:
       VIRTUAL_HOST: frontend.apex.tld
+      VIRTUAL_PORT: "80"
       VIRTUAL_PROTO: http
     expose:
       - "80"
@@ -27,10 +28,129 @@ services:
     restart: unless-stopped
     environment:
       VIRTUAL_HOST: backend.apex.tld
-      VIRTUAL_PORT: "5000"
+      VIRTUAL_PORT: "8000"
       VIRTUAL_PROTO: http
+      DATABASE_URL: postgresql://app:app@postgres:5432/app
+      REDIS_URL: redis://redis:6379/0
+      CACHE_TTL_SECONDS: "5"
     expose:
-      - "5000"
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=8)"]
+      interval: 10s
+      timeout: 9s
+      retries: 3
+      start_period: 15s
+    networks:
+      - app_net
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - app_net
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - app_net
+
+  worker:
+    build: ./worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://app:app@postgres:5432/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app_net
+
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    environment:
+      VIRTUAL_HOST: n8n.apex.tld
+      VIRTUAL_PORT: "5678"
+      VIRTUAL_PROTO: http
+      N8N_HOST: n8n.apex.tld
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://n8n.apex.tld/
+      N8N_PROXY_HOPS: "1"
+      N8N_EDITOR_BASE_URL: https://n8n.apex.tld/
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: n8n-postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: n8n
+    expose:
+      - "5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      n8n-postgres:
+        condition: service_healthy
+    networks:
+      - app_net
+
+  n8n-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: n8n
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: n8n
+    expose:
+      - "5432"
+    volumes:
+      - n8n_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n -d n8n"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks:
+      - app_net
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    expose:
+      - "9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks:
       - app_net
 
@@ -48,66 +168,19 @@ services:
       - "3000"
     volumes:
       - grafana_data:/var/lib/grafana
-    networks:
-      - app_net
-
-  n8n:
-    image: n8nio/n8n:latest
-    restart: unless-stopped
-    environment:
-      VIRTUAL_HOST: n8n.apex.tld
-      VIRTUAL_PORT: "5678"
-      VIRTUAL_PROTO: http
-      N8N_HOST: n8n.apex.tld
-      N8N_PROTOCOL: https
-      WEBHOOK_URL: https://n8n.apex.tld/
-      N8N_PROXY_HOPS: "1"
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: "5432"
-      DB_POSTGRESDB_DATABASE: n8n
-      DB_POSTGRESDB_USER: n8n
-      DB_POSTGRESDB_PASSWORD: n8n
-    expose:
-      - "5678"
-    volumes:
-      - n8n_data:/home/node/.n8n
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - app_net
-
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: n8n
-      POSTGRES_USER: n8n
-      POSTGRES_PASSWORD: n8n
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U n8n -d n8n"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
     networks:
       - app_net
 
   ckpit:
-    image: quay.io/cockpit/ws:latest
+    build: ./ckpit
     restart: unless-stopped
     environment:
       VIRTUAL_HOST: ckpit.apex.tld
-      VIRTUAL_PORT: "9090"
+      VIRTUAL_PORT: "8000"
       VIRTUAL_PROTO: http
     expose:
-      - "9090"
-    configs:
-      - source: ckpit_config
-        target: /etc/cockpit/cockpit.conf
+      - "8000"
     networks:
       - app_net
 
@@ -116,15 +189,8 @@ networks:
     driver: bridge
 
 volumes:
-  grafana_data:
-  n8n_data:
   postgres_data:
-
-configs:
-  ckpit_config:
-    content: |
-      [WebService]
-      Origins = https://ckpit.apex.tld wss://ckpit.apex.tld
-      ProtocolHeader = X-Forwarded-Proto
-      AllowUnencrypted = true
-      RequireHost = true
+  redis_data:
+  n8n_data:
+  n8n_postgres_data:
+  grafana_data:
