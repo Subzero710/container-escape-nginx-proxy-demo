@@ -324,28 +324,6 @@ Cette procédure concerne uniquement un volume provenant de l'ancienne version,
 où la base `app` et le rôle `app` n'existent pas encore. Pour un projet neuf,
 utiliser directement les commandes de lancement habituelles.
 
-## Générateur autonome
-
-`create_project2.py` utilise uniquement la bibliothèque standard Python et
-`pathlib`. Depuis un dossier cible vide :
-
-```sh
-python /chemin/vers/create_project2.py
-```
-
-Il écrit tous les fichiers en UTF-8, crée les dossiers parents, affiche chaque
-fichier et les prochaines commandes utiles. Il vérifie toutes les destinations
-avant d'écrire et refuse les fichiers existants sans `--force` :
-
-```sh
-python /chemin/vers/create_project2.py --force
-```
-
-`--force` met à jour les fichiers générés et retire le dossier `ckpit/` ainsi
-que les anciens fichiers remplacés. Il conserve les autres fichiers, notamment
-les certificats. Les liens symboliques ne sont pas suivis lors de la génération.
-Le générateur affiche les commandes d'installation et de configuration Cockpit
-à exécuter sur l'hôte ; il crée les fichiers du projet dans le dossier courant.
 
 ## Vérification du code
 
@@ -361,7 +339,7 @@ Les tests de génération et de configuration de la stack se lancent avec :
 python -m venv .venv
 . .venv/bin/activate
 pip install -r tests/requirements.txt
-pytest -q tests/test_generator.py tests/test_stack.py
+pytest -q tests/test_stack.py
 cd frontend
 npm ci
 npm run build

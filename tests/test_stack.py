@@ -57,7 +57,6 @@ def test_public_container_hosts_remain_automatic(compose):
 
 def test_system_cockpit_has_no_application_directory():
     assert not (ROOT / "ckpit").exists()
-    assert (ROOT / "create_project2.py").is_file()
 
 
 def test_static_cockpit_route_preserves_tls_and_websocket_headers():
