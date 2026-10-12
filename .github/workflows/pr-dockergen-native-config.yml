@@ -10,7 +10,7 @@ permissions:
 jobs:
   proxy-config-validation:
     name: Validate project config with local docker-gen
-    runs-on: [self-hosted, docker-lab]
+    runs-on: [self-hosted, fossil]
     timeout-minutes: 5
 
     steps:
